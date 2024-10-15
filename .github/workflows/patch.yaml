@@ -15,11 +15,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # provide relevant list of images to scan on each run
         images:
           - "docker.io/library/alpine:3.18.4"
-          - "docker.io/openpolicyagent/opa:0.46.0"
-          - "docker.io/library/hello-world:latest"
+          - "registry.access.redhat.com/ubi8/openjdk-21:1.19-1"
     steps:
       - name: Set Tag
         id: set_tag
@@ -27,10 +25,25 @@ jobs:
           TAG=$(echo "${{ matrix.images }}" | grep -oP '(?<=:).*' | grep -oP '^[^/]+')
           IMMUNIZED_TAG="${TAG}"
           IMAGE_NAME=$(echo "${{ matrix.images }}" | sed -E 's|.*/([^:/]+/[^:/]+).*|\1|')
-          echo "PATCHED_TAG=${IMMUNIZED_TAG}" >> $GITHUB_ENV
+          echo "PATCHED_TAG=${IMMUNIZED_TAG}-patched" >> $GITHUB_ENV
           echo "IMAGE_NAME=${IMAGE_NAME}" >> $GITHUB_ENV
+      - id: trivy-db
+        name: Check trivy db sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          endpoint='/orgs/aquasecurity/packages/container/trivy-db/versions'
+          headers='Accept: application/vnd.github+json'
+          jqFilter='.[] | select(.metadata.container.tags[] | contains("latest")) | .name | sub("sha256:";"")'
+          sha=$(gh api -H "${headers}" "${endpoint}" | jq --raw-output "${jqFilter}")
+          echo "Trivy DB sha256:${sha}"
+          echo "sha=${sha}" >> $GITHUB_OUTPUT
+      - uses: actions/cache@v3
+        with:
+          path: .trivy
+          key: trivy-db-${{ steps.trivy-db.outputs.sha }}
       - name: Generate Trivy Report
-        uses: aquasecurity/trivy-action@0.21.0
+        uses: aquasecurity/trivy-action@0.27.0
         with:
           scan-type: "image"
           format: "json"
@@ -38,12 +51,16 @@ jobs:
           ignore-unfixed: true
           vuln-type: "os"
           image-ref: ${{ matrix.images }}
+          cache-dir: .trivy
       - name: Check vulnerability count
         id: vuln_count
         run: |
           report_file="report.json"
           vuln_count=$(jq 'if .Results then [.Results[] | select(.Class=="os-pkgs" and .Vulnerabilities!=null) | .Vulnerabilities[]] | length else 0 end' "$report_file")
           echo "vuln_count=$vuln_count" >> $GITHUB_OUTPUT
+      - name: Display vulnerability count
+        run: |
+          echo "Vulnerability Count: ${{ steps.vuln_count.outputs.vuln_count }}"
       - name: Run Copa action
         if: steps.vuln_count.outputs.vuln_count != '0'
         id: copa
@@ -65,5 +82,28 @@ jobs:
         if: steps.login.conclusion == 'success'
         run: |
           # retag if needed
-          docker tag ${{ steps.copa.outputs.patched-image }} ghcr.io/Moviemaker93/demo-avellino-linux-day-2024/${{ steps.copa.outputs.patched-image }}
-          docker push ghcr.io/Moviemaker93/demo-avellino-linux-day-2024/${{ steps.copa.outputs.patched-image }}
+          docker tag ${{ steps.copa.outputs.patched-image }} ghcr.io/moviemaker93/demo-avellino-linux-day-2024/${{ env.IMAGE_NAME }}:${{ env.PATCHED_TAG }}
+          docker push ghcr.io/moviemaker93/demo-avellino-linux-day-2024/${{ env.IMAGE_NAME }}:${{env.PATCHED_TAG}}
+      - name: Pull patched image
+        if: steps.login.conclusion == 'success'
+        run: |
+          # retag if needed
+          docker pull ghcr.io/moviemaker93/demo-avellino-linux-day-2024/${{ env.IMAGE_NAME }}:${{env.PATCHED_TAG}}
+      - name: Generate Trivy Report for Patched
+        uses: aquasecurity/trivy-action@0.27.0
+        with:
+          scan-type: "image"
+          format: "json"
+          output: "report-patched.json"
+          ignore-unfixed: true
+          vuln-type: "os"
+          image-ref: "ghcr.io/moviemaker93/demo-avellino-linux-day-2024/${{ env.IMAGE_NAME }}:${{env.PATCHED_TAG}}"
+      - name: Check vulnerability count Patched
+        id: vuln_count_patched
+        run: |
+          report_file="report-patched.json"
+          vuln_count=$(jq 'if .Results then [.Results[] | select(.Class=="os-pkgs" and .Vulnerabilities!=null) | .Vulnerabilities[]] | length else 0 end' "$report_file")
+          echo "vuln_count_patched=$vuln_count" >> $GITHUB_OUTPUT
+      - name: Display vulnerability count Patched
+        run: |
+          echo "Vulnerability Count: ${{ steps.vuln_count_patched.outputs.vuln_count_patched }}"
