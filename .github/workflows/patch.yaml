@@ -16,7 +16,6 @@ jobs:
       fail-fast: false
       matrix:
         images:
-          - "docker.io/library/alpine:3.18.4"
           - "registry.access.redhat.com/ubi8/openjdk-21:1.19-1"
     steps:
       - name: Set Tag
