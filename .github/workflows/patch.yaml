@@ -96,6 +96,8 @@ jobs:
           output: "report-patched.json"
           vuln-type: "os"
           image-ref: "ghcr.io/moviemaker93/demo-avellino-linux-day-2024/${{ env.IMAGE_NAME }}:${{env.PATCHED_TAG}}"
+        env:
+          TRIVY_IGNORE_UNFIXED: false
       - name: Check vulnerability count Patched
         id: vuln_count_patched
         run: |
