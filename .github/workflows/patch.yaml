@@ -51,6 +51,8 @@ jobs:
           vuln-type: "os"
           image-ref: ${{ matrix.images }}
           cache-dir: .trivy
+        env: 
+          TRIVY_IGNORE_UNFIXED: false
       - name: Check vulnerability count
         id: vuln_count
         run: |
